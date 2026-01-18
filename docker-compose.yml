@@ -17,9 +17,7 @@ services:
       - 21116:21116/udp
       - 21118:21118
     image: 752681609007.dkr.ecr.us-east-1.amazonaws.com/eremote-server:latest
-    # TODO: Replace YOUR_SERVER_IP_OR_DOMAIN with your actual server IP or domain
-    # Example: command: hbbs -r remote.celeratec.com:21117
-    command: hbbs -r YOUR_SERVER_IP_OR_DOMAIN:21117
+    command: hbbs -r 44.193.201.152:21117
     volumes:
       - ./data:/root
     networks:
