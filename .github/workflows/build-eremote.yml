@@ -51,15 +51,63 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -e
+            
             # Login to ECR
             aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 752681609007.dkr.ecr.us-east-1.amazonaws.com
             
-            # Navigate to eremote-server directory
+            # Create eremote-server directory if it doesn't exist
+            mkdir -p ~/eremote-server
             cd ~/eremote-server
             
-            # Pull latest image and restart containers
-            docker compose pull
-            docker compose up -d
+            # Create docker-compose.yml
+            cat > docker-compose.yml << 'EOF'
+            version: '3'
+            
+            networks:
+              eremote-net:
+                external: false
+            
+            services:
+              hbbs:
+                container_name: eremote-hbbs
+                ports:
+                  - 21115:21115
+                  - 21116:21116
+                  - 21116:21116/udp
+                  - 21118:21118
+                image: 752681609007.dkr.ecr.us-east-1.amazonaws.com/eremote-server:latest
+                command: hbbs -r 44.193.201.152:21117
+                volumes:
+                  - ./data:/root
+                networks:
+                  - eremote-net
+                depends_on:
+                  - hbbr
+                restart: unless-stopped
+            
+              hbbr:
+                container_name: eremote-hbbr
+                ports:
+                  - 21117:21117
+                  - 21119:21119
+                image: 752681609007.dkr.ecr.us-east-1.amazonaws.com/eremote-server:latest
+                command: hbbr
+                volumes:
+                  - ./data:/root
+                networks:
+                  - eremote-net
+                restart: unless-stopped
+            EOF
+            
+            # Pull latest image and restart containers (use docker-compose if docker compose not available)
+            if docker compose version &> /dev/null; then
+              docker compose pull
+              docker compose up -d
+            else
+              docker-compose pull
+              docker-compose up -d
+            fi
             
             # Clean up old images
             docker image prune -f
