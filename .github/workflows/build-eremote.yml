@@ -3,7 +3,7 @@ name: Build eRemote Server
 on:
   push:
     branches:
-      - main
+      - master
 
 env:
   ECR_REGISTRY: 752681609007.dkr.ecr.us-east-1.amazonaws.com
