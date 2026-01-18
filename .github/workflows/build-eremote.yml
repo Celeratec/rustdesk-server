@@ -4,106 +4,130 @@ on:
   push:
     branches:
       - master
+      - main
+  workflow_dispatch:
 
 env:
   ECR_REGISTRY: 752681609007.dkr.ecr.us-east-1.amazonaws.com
   ECR_REPOSITORY: eremote-server
-  IMAGE_TAG: latest
 
 jobs:
+  security-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Check for sensitive files
+        run: |
+          echo "=== Security Check: Scanning for sensitive files ==="
+          FOUND_SECRETS=0
+          
+          if find . -name "id_ed25519" -o -name "*.pem" -o -name "*.pfx" -o -name "*.key" -o -name "*.p12" 2>/dev/null | grep -v ".gitignore" | grep -q .; then
+            echo "ERROR: Private key files found!"
+            FOUND_SECRETS=1
+          fi
+          
+          if find . -name ".env" -o -name ".env.*" 2>/dev/null | grep -q .; then
+            echo "ERROR: Environment files found!"
+            FOUND_SECRETS=1
+          fi
+          
+          if git ls-files | grep -E "\.sqlite3$|\.sqlite$|\.db$" | grep -q .; then
+            echo "ERROR: Database files tracked!"
+            FOUND_SECRETS=1
+          fi
+          
+          if git ls-files | grep -q "id_ed25519"; then
+            echo "ERROR: Identity key files tracked!"
+            FOUND_SECRETS=1
+          fi
+          
+          if [ $FOUND_SECRETS -eq 1 ]; then
+            echo "BUILD BLOCKED: Sensitive files detected!"
+            exit 1
+          fi
+          
+          echo "Security check passed"
+
   build:
     runs-on: ubuntu-latest
-
+    needs: security-check
     permissions:
       contents: read
-
+    outputs:
+      image_tag: \${{ steps.meta.outputs.tags }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-access-key-id: \${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: \${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Extract metadata
+        id: meta
+        run: |
+          SHORT_SHA=\$(echo \${{ github.sha }} | cut -c1-7)
+          echo "short_sha=\$SHORT_SHA" >> \$GITHUB_OUTPUT
+
       - name: Build and push Docker image
         run: |
-          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
-          docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker build -t \$ECR_REPOSITORY:latest .
+          docker tag \$ECR_REPOSITORY:latest \$ECR_REGISTRY/\$ECR_REPOSITORY:latest
+          docker tag \$ECR_REPOSITORY:latest \$ECR_REGISTRY/\$ECR_REPOSITORY:\${{ steps.meta.outputs.short_sha }}
+          docker push \$ECR_REGISTRY/\$ECR_REPOSITORY:latest
+          docker push \$ECR_REGISTRY/\$ECR_REPOSITORY:\${{ steps.meta.outputs.short_sha }}
 
   deploy:
     runs-on: ubuntu-latest
     needs: build
-
     steps:
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          host: \${{ secrets.EC2_HOST }}
+          username: \${{ secrets.EC2_USERNAME }}
+          key: \${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
-            
-            # Login to ECR
             aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 752681609007.dkr.ecr.us-east-1.amazonaws.com
-            
-            # Pull latest image
             docker pull 752681609007.dkr.ecr.us-east-1.amazonaws.com/eremote-server:latest
-            
-            # Create data directory
-            mkdir -p ~/eremote-server/data
-            cd ~/eremote-server
-            
-            # Create docker network if it doesn't exist
-            docker network create eremote-net 2>/dev/null || true
-            
-            # Stop and remove ALL containers using eremote image or with eremote names
+            mkdir -p /opt/eremote
             docker ps -a --filter "name=eremote" -q | xargs -r docker rm -f 2>/dev/null || true
-            docker ps -a --filter "ancestor=752681609007.dkr.ecr.us-east-1.amazonaws.com/eremote-server" -q | xargs -r docker rm -f 2>/dev/null || true
-            
-            # Kill any container using the required ports
             for port in 21115 21116 21117 21118 21119; do
-              container=$(docker ps -q --filter "publish=$port" 2>/dev/null)
-              if [ -n "$container" ]; then
-                docker rm -f $container 2>/dev/null || true
+              container=\$(docker ps -q --filter "publish=\$port" 2>/dev/null)
+              if [ -n "\$container" ]; then
+                docker rm -f \$container 2>/dev/null || true
               fi
             done
-            
-            # Wait for ports to be released
             sleep 3
-            
-            # Start hbbr (relay server)
             docker run -d \
-              --name eremote-hbbr \
-              --network eremote-net \
-              --restart unless-stopped \
-              -p 21117:21117 \
-              -p 21119:21119 \
-              -v ./data:/root \
-              752681609007.dkr.ecr.us-east-1.amazonaws.com/eremote-server:latest \
-              hbbr
-            
-            # Start hbbs (rendezvous server)
-            docker run -d \
-              --name eremote-hbbs \
-              --network eremote-net \
+              --name eremote-server \
               --restart unless-stopped \
               -p 21115:21115 \
               -p 21116:21116 \
               -p 21116:21116/udp \
+              -p 21117:21117 \
               -p 21118:21118 \
-              -v ./data:/root \
-              752681609007.dkr.ecr.us-east-1.amazonaws.com/eremote-server:latest \
-              hbbs -r 44.193.201.152:21117
-            
-            # Clean up old images
+              -p 21119:21119 \
+              -v /opt/eremote:/root \
+              -e RELAY_HOST=44.193.201.152 \
+              752681609007.dkr.ecr.us-east-1.amazonaws.com/eremote-server:latest
+            sleep 5
+            docker ps --filter "name=eremote-server"
+            docker logs --tail 20 eremote-server
             docker image prune -f
+            echo "Server public key:"
+            cat /opt/eremote/id_ed25519.pub 2>/dev/null || echo "Key will be generated"

@@ -1,5 +1,8 @@
 # eRemote Server Dockerfile
 # Multi-stage build: compiles Rust binaries, then creates minimal runtime image
+#
+# SECURITY: No keys or secrets are baked into this image.
+# Identity keys (id_ed25519*) are generated at runtime and stored on host volume.
 
 # Stage 1: Build
 FROM rust:1.82-bookworm AS builder
@@ -44,7 +47,6 @@ RUN cargo build --release
 
 # Stage 2: Runtime
 FROM debian:12-slim
-WORKDIR /root
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
@@ -53,8 +55,26 @@ RUN apt-get update && apt-get install -y \
     libsodium23 \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy binaries from builder
 COPY --from=builder /build/target/release/hbbs /usr/local/bin/
 COPY --from=builder /build/target/release/hbbr /usr/local/bin/
+COPY --from=builder /build/target/release/eremote-utils /usr/local/bin/
 
-EXPOSE 21115 21116 21117 21118 21119
-CMD ["hbbs"]
+# Copy entrypoint script
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Set working directory for data (identity keys, database)
+# Host volume should be mounted here: -v /opt/eremote:/root
+WORKDIR /root
+
+# Expose ports:
+# 21115 - NAT type test
+# 21116 - ID registration + heartbeat (TCP & UDP)
+# 21117 - Relay
+# 21118 - WebSocket for web client
+# 21119 - WebSocket relay
+EXPOSE 21115 21116 21116/udp 21117 21118 21119
+
+# Default entrypoint runs both services
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

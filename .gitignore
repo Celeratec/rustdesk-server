@@ -1,12 +1,49 @@
-target
-id*
-db*
-debian-build
-debian/.debhelper
-debian/debhelper-build-stamp
+# Build artifacts
+target/
+debian-build/
+debian/.debhelper/
+debian/debhelper-build-stamp/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
 .DS_Store
-.vscode
+
+# Generated files
 src/version.rs
+
+# ===========================================
+# SECURITY: Sensitive files - NEVER commit
+# ===========================================
+
+# Identity keys (generated at runtime)
+id_ed25519
+id_ed25519.pub
+*.pem
+*.pfx
+*.key
+*.p12
+
+# Database (contains peer data)
 db_v2.sqlite3
+*.sqlite3
+*.sqlite
+*.db
+
+# Environment files (may contain secrets)
+.env
+.env.*
+*.env
+
+# Test files
 test.*
-.idea
+
+# Logs (may contain sensitive info)
+*.log
+logs/
+
+# Backup files
+*.bak
+*.backup
