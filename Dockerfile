@@ -23,14 +23,20 @@ COPY build.rs ./
 RUN apt-get update && apt-get install -y sqlite3 && rm -rf /var/lib/apt/lists/*
 RUN sqlite3 /build/db_v2.sqlite3 " \
     CREATE TABLE IF NOT EXISTS peer ( \
-        guid BLOB PRIMARY KEY NOT NULL, \
-        id VARCHAR(100), \
-        uuid BLOB, \
-        pk BLOB, \
-        user VARCHAR(100), \
-        status TINYINT, \
-        info TEXT NOT NULL \
-    );"
+        guid blob primary key not null, \
+        id varchar(100) not null, \
+        uuid blob not null, \
+        pk blob not null, \
+        created_at datetime not null default(current_timestamp), \
+        user blob, \
+        status tinyint, \
+        note varchar(300), \
+        info text not null \
+    ) without rowid; \
+    CREATE UNIQUE INDEX IF NOT EXISTS index_peer_id ON peer (id); \
+    CREATE INDEX IF NOT EXISTS index_peer_user ON peer (user); \
+    CREATE INDEX IF NOT EXISTS index_peer_created_at ON peer (created_at); \
+    CREATE INDEX IF NOT EXISTS index_peer_status ON peer (status);"
 ENV DATABASE_URL="sqlite:///build/db_v2.sqlite3"
 
 # Build release binaries
