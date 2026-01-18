@@ -19,8 +19,19 @@ COPY src ./src
 COPY libs ./libs
 COPY build.rs ./
 
-# Skip sqlx compile-time query verification (queries validated at runtime)
-ENV SQLX_OFFLINE=true
+# Create SQLite database with schema for sqlx compile-time verification
+RUN apt-get update && apt-get install -y sqlite3 && rm -rf /var/lib/apt/lists/*
+RUN sqlite3 /build/db_v2.sqlite3 " \
+    CREATE TABLE IF NOT EXISTS peer ( \
+        guid BLOB PRIMARY KEY NOT NULL, \
+        id VARCHAR(100), \
+        uuid BLOB, \
+        pk BLOB, \
+        user VARCHAR(100), \
+        status TINYINT, \
+        info TEXT NOT NULL \
+    );"
+ENV DATABASE_URL="sqlite:///build/db_v2.sqlite3"
 
 # Build release binaries
 RUN cargo build --release
